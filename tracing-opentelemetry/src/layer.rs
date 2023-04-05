@@ -1,5 +1,6 @@
 use crate::{OtelData, PreSampledTracer};
 use once_cell::unsync;
+use opentelemetry::trace::SpanContext;
 use opentelemetry::{
     trace::{self as otel, noop, OrderMap, TraceContextExt},
     Context as OtelContext, Key, KeyValue, StringValue, Value,
@@ -593,7 +594,7 @@ where
                 .get_mut::<OtelData>()
                 .map(|builder| self.tracer.sampled_context(builder))
                 .unwrap_or_default()
-        // Else if the span is inferred from context, look up any available current span.
+            // Else if the span is inferred from context, look up any available current span.
         } else if attrs.is_contextual() {
             ctx.lookup_current()
                 .and_then(|span| {
@@ -603,7 +604,7 @@ where
                         .map(|builder| self.tracer.sampled_context(builder))
                 })
                 .unwrap_or_else(OtelContext::current)
-        // Explicit root spans should have no parent context.
+            // Explicit root spans should have no parent context.
         } else {
             OtelContext::new()
         }
@@ -774,21 +775,25 @@ where
             .get_mut::<OtelData>()
             .expect("Missing otel data span extensions");
 
-        let follows_span = ctx
-            .span(follows)
-            .expect("Span to follow not found, this is a bug");
-        let mut follows_extensions = follows_span.extensions_mut();
-        let follows_data = follows_extensions
-            .get_mut::<OtelData>()
-            .expect("Missing otel data span extensions");
+        let follows_context = match ctx.span(follows) {
+            Some(follows_span) => {
+                let mut follows_extensions = follows_span.extensions_mut();
+                let follows_data = follows_extensions
+                    .get_mut::<OtelData>()
+                    .expect("Missing otel data span extensions");
 
-        let follows_context = self
-            .tracer
-            .sampled_context(follows_data)
-            .span()
-            .span_context()
-            .clone();
+                self.tracer
+                    .sampled_context(follows_data)
+                    .span()
+                    .span_context()
+                    .clone()
+            }
+
+            None => SpanContext::empty_context(),
+        };
+
         let follows_link = otel::Link::new(follows_context, Vec::new());
+
         if let Some(ref mut links) = data.builder.links {
             links.push(follows_link);
         } else {
@@ -984,6 +989,7 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestTracer(Arc<Mutex<Option<OtelData>>>);
+
     impl otel::Tracer for TestTracer {
         type Span = noop::NoopSpan;
         fn start_with_context<T>(&self, _name: T, _context: &OtelContext) -> Self::Span
@@ -1033,6 +1039,7 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestSpan(otel::SpanContext);
+
     impl otel::Span for TestSpan {
         fn add_event_with_timestamp<T: Into<Cow<'static, str>>>(
             &mut self,
@@ -1058,11 +1065,13 @@ mod tests {
         msg: &'static str,
         source: Option<Box<TestDynError>>,
     }
+
     impl Display for TestDynError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "{}", self.msg)
         }
     }
+
     impl Error for TestDynError {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             match &self.source {
@@ -1071,6 +1080,7 @@ mod tests {
             }
         }
     }
+
     impl TestDynError {
         fn new(msg: &'static str) -> Self {
             Self { msg, source: None }
@@ -1248,7 +1258,7 @@ mod tests {
             Value::Array(
                 vec![
                     StringValue::from("intermediate error"),
-                    StringValue::from("base error")
+                    StringValue::from("base error"),
                 ]
                 .into()
             )
@@ -1260,7 +1270,7 @@ mod tests {
             Value::Array(
                 vec![
                     StringValue::from("intermediate error"),
-                    StringValue::from("base error")
+                    StringValue::from("base error"),
                 ]
                 .into()
             )
@@ -1396,7 +1406,7 @@ mod tests {
             Value::Array(
                 vec![
                     StringValue::from("intermediate error"),
-                    StringValue::from("base error")
+                    StringValue::from("base error"),
                 ]
                 .into()
             )
